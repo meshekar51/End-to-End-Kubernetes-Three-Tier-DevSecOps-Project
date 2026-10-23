@@ -1,29 +1,27 @@
-
-# CICD using GitHub actions
-
 name: CI/CD
 
-# Exclude the workflow to run on changes to the helm chart
-on: [push, workflow_dispatch]
+on:
+  push:
     branches:
       - main
     paths:
       - 'Application-Code/frontend/**'
-    paths-ignore:
-      - 'Kubernetes-Manifests-file/**'
-      - 'k8s/**'
-      - 'README.md'
+
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
 
 jobs:
-
   build:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    - name: Configure AWS credentials
+      - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
@@ -41,7 +39,7 @@ jobs:
         run: |
           docker build \
             -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
-            .
+            ./Application-Code/frontend
 
       - name: Push Docker image to ECR
         env:
@@ -51,4 +49,3 @@ jobs:
         run: |
           docker push \
             $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-
