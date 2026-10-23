@@ -7,7 +7,7 @@ on: [push, workflow_dispatch]
     branches:
       - main
     paths:
-      - 'Application-Code/frontend/**'
+      - 'Application-Code/backend/**'
     paths-ignore:
       - 'Kubernetes-Manifests-file/**'
       - 'k8s/**'
