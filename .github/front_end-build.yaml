@@ -7,6 +7,8 @@ name: CI/CD
 on: [push, workflow_dispatch]
     branches:
       - main
+    paths:
+      - 'Application-Code/frontend/**'
     paths-ignore:
       - 'Kubernetes-Manifests-file/**'
       - 'k8s/**'
