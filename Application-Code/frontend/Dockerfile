@@ -7,7 +7,7 @@ COPY package*.json ./
 RUN npm install
 
 COPY . .
-
+ENV NODE_OPTIONS=--openssl-legacy-provider
 RUN npm run build
 
 FROM node:22-alpine
