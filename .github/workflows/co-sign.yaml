@@ -2,17 +2,6 @@ name: Security - Cosign Image Signing
 
 on:
   workflow_dispatch:
-    inputs:
-      image-ref:
-        description: "Full ECR image reference"
-        required: true
-        default: "136283260189.dkr.ecr.us-east-1.amazonaws.com/new-repo:latest"
-
-  workflow_call:
-    inputs:
-      image-ref:
-        required: true
-        type: string
 
 permissions:
   id-token: write
@@ -25,29 +14,43 @@ jobs:
     steps:
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3
-        with:
-          cosign-release: "v2.6.0"
 
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION }}
+          aws-region: us-east-1
 
       - name: Login to Amazon ECR
+        id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Sign Existing Image
+      - name: Get latest image digest
+        id: image
+        run: |
+          DIGEST=$(aws ecr describe-images \
+            --repository-name new-repo \
+            --region us-east-1 \
+            --query 'sort_by(imageDetails,& imagePushedAt)[-1].imageDigest' \
+            --output text)
+
+          IMAGE_URI="${{ steps.login-ecr.outputs.registry }}/new-repo@$DIGEST"
+
+          echo "digest=$DIGEST" >> $GITHUB_OUTPUT
+          echo "image_uri=$IMAGE_URI" >> $GITHUB_OUTPUT
+
+      - name: Sign image
         env:
           COSIGN_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
           COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
         run: |
           cosign sign --key env://COSIGN_KEY --yes \
-          "${{ inputs.image-ref }}"
+          "${{ steps.image.outputs.image_uri }}"
 
-      - name: Verify Image Signature
+      - name: Verify image
         env:
           COSIGN_PUBLIC_KEY: ${{ secrets.COSIGN_PUBLIC_KEY }}
         run: |
-          cosign verify --key env://COSIGN_PUBLIC_KEY \
-          "${{ inputs.image-ref }}"
+          cosign verify \
+          --key env://COSIGN_PUBLIC_KEY \
+          "${{ steps.image.outputs.image_uri }}"
