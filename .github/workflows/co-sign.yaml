@@ -15,7 +15,7 @@ on:
     inputs:
       image-ref:
         required: true
-        default: "meshekar51/flask-app:latest"
+        default: "meshekar51/frontend-app:latest"
 
 jobs:
   sign-image:
