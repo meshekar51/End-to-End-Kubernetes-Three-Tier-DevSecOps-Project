@@ -1,8 +1,12 @@
-name: 'Dependency Review'
+name: Dependency Review
+
 on:
-  workflow_call:
   workflow_dispatch:
-  
+    inputs:
+      base_ref:
+        required: true
+      head_ref:
+        required: true
 
 permissions:
   contents: read
@@ -11,9 +15,9 @@ jobs:
   dependency-review:
     runs-on: ubuntu-latest
     steps:
-      - name: 'Checkout Repository'
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v5
+
+      - uses: actions/dependency-review-action@v5
         with:
-          ref: master
-      - name: 'Dependency Review'
-        uses: actions/dependency-review-action@v5
+          base-ref: ${{ inputs.base_ref }}
+          head-ref: ${{ inputs.head_ref }}
