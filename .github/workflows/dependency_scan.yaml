@@ -1,6 +1,8 @@
 name: 'Dependency Review'
-on: [workflow_call, workflow_dispatch]
-    
+on:
+  workflow_call:
+  workflow_dispatch:
+  
 
 permissions:
   contents: read
@@ -11,5 +13,7 @@ jobs:
     steps:
       - name: 'Checkout Repository'
         uses: actions/checkout@v6
+        with:
+          ref: master
       - name: 'Dependency Review'
         uses: actions/dependency-review-action@v5
