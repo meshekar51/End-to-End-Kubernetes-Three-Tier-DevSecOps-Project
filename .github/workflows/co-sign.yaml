@@ -1,66 +1,53 @@
 name: Security - Cosign Image Signing
 
-permissions:
-  id-token: write
-  contents: read
-  packages: write
-  
 on:
+  workflow_dispatch:
+    inputs:
+      image-ref:
+        description: "Full ECR image reference"
+        required: true
+        default: "136283260189.dkr.ecr.us-east-1.amazonaws.com/new-repo:latest"
+
   workflow_call:
     inputs:
       image-ref:
         required: true
         type: string
-  workflow_dispatch:
-    inputs:
-      image-ref:
-        required: true
-        default: "meshekar51/frontend-app:latest"
+
+permissions:
+  id-token: write
+  contents: read
 
 jobs:
   sign-image:
     runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
 
+    steps:
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3
         with:
           cosign-release: "v2.6.0"
 
-      - name: Configure AWS credentials
+      - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
 
       - name: Login to Amazon ECR
-        id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build Docker image
-        env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
-          IMAGE_TAG: ${{ github.sha }}
-        run: |
-          docker build \
-            -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
-            ./Application-Code/frontend
-      - name: Sign image
+      - name: Sign Existing Image
         env:
           COSIGN_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
           COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
-          IMAGE_TAG: ${{ github.sha }}
         run: |
           cosign sign --key env://COSIGN_KEY --yes \
-          $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          "${{ inputs.image-ref }}"
 
-      - name: Verify image signature
+      - name: Verify Image Signature
         env:
           COSIGN_PUBLIC_KEY: ${{ secrets.COSIGN_PUBLIC_KEY }}
         run: |
-          cosign verify --key env://COSIGN_PUBLIC_KEY "${{ inputs.image-ref }}"
+          cosign verify --key env://COSIGN_PUBLIC_KEY \
+          "${{ inputs.image-ref }}"
