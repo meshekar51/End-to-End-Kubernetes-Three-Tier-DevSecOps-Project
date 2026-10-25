@@ -48,12 +48,16 @@ jobs:
           docker build \
             -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
             ./Application-Code/frontend
-      - name: Sign image with Cosign (Private/Public Key)
+      - name: Sign image
         env:
           COSIGN_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
           COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+          IMAGE_TAG: ${{ github.sha }}
         run: |
-          cosign sign --key env://COSIGN_KEY --yes "${{ inputs.image-ref }}"
+          cosign sign --key env://COSIGN_KEY --yes \
+          $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
 
       - name: Verify image signature
         env:
