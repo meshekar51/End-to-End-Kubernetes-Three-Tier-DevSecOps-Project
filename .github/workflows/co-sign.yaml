@@ -1,9 +1,10 @@
 name: Security - Cosign Image Signing
 
 permissions:
+  id-token: write
   contents: read
   packages: write
-
+  
 on:
   workflow_call:
     inputs:
