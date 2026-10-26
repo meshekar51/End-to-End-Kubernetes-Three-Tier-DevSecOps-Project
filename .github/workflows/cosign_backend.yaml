@@ -1,0 +1,103 @@
+
+name: FRONTEND-CI-CD-cosign
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'Application-Code/backend/**'
+
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  build-sign-verify:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Checkout
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 2. AWS Authentication (only once)
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      # 3. ECR Login (only once)
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # 4. Docker Buildx
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # 5. Build and Push
+      - name: Build and push Docker image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: ./Application-Code/frontend
+          push: true
+          tags: |
+            ${{ steps.login-ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:${{ github.sha }}
+            
+      #Update deployment yaml
+      - name: deployment yaml new image tag
+        shell: bash
+        run: |
+          set -e
+
+          sed -i "s/^  image:.*/  image: ${{ github.run_number }}/" Kubernetes-Manifests-file/Backend/deployment.yaml
+
+          git config --local user.email "meshekar5@gmail.com"
+          git config --local user.name "meshekar51"
+
+          if git diff --quiet -- Kubernetes-Manifests-file/Frontend/deployment.yaml; then
+            echo "No Helm values change required."
+          else
+            git add Kubernetes-Manifests-file/Frontend/deployment.yaml
+            git commit -m "Update image tag to ${{ github.run_number }}"
+            git push origin HEAD:${{ github.ref_name }}
+          fi
+
+      # 6. Install Cosign
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+
+      # 7. Sign image
+      - name: Sign Docker image
+        env:
+          COSIGN_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+          IMAGE_URI: ${{ steps.login-ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}@${{ steps.build.outputs.digest }}
+        run: |
+          cosign sign \
+            --key env://COSIGN_KEY \
+            --yes \
+            "$IMAGE_URI"
+
+      # 8. Verify signature
+      - name: Verify Docker image signature
+        env:
+          COSIGN_PUBLIC_KEY: ${{ secrets.COSIGN_PUBLIC_KEY }}
+          IMAGE_URI: ${{ steps.login-ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}@${{ steps.build.outputs.digest }}
+        run: |
+          cosign verify \
+            --key env://COSIGN_PUBLIC_KEY \
+            "$IMAGE_URI"
+
+      # 9. Success
+      - name: Show signed image
+        env:
+          IMAGE_URI: ${{ steps.login-ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}@${{ steps.build.outputs.digest }}
+        run: |
+          echo "Successfully built, signed and verified:"
+          echo "$IMAGE_URI"
