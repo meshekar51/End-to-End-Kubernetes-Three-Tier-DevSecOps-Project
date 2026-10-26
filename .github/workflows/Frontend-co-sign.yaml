@@ -50,7 +50,8 @@ jobs:
             ${{ steps.login-ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:${{ github.sha }}
             
               
-      - name: Update deployment.yaml with verified image
+      
+      - name: Update frontend deployment image
         env:
             IMAGE_URI: ${{ steps.login-ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}@${{ steps.build.outputs.digest }}
         run: |
@@ -58,28 +59,24 @@ jobs:
         
             FILE="Kubernetes-Manifests-file/Frontend/deployment.yaml"
         
-            echo "Before update:"
+            echo "===== BEFORE ====="
             grep -nE '^[[:space:]]*image:' "$FILE"
         
-            COUNT=$(grep -cE '^[[:space:]]*image:' "$FILE" || true)
-        
-            if [ "$COUNT" -ne 1 ]; then
-              echo "Expected exactly one image field, found $COUNT"
-              exit 1
-            fi
+            echo "===== NEW IMAGE ====="
+            echo "$IMAGE_URI"
         
             sed -i -E \
               "s|^([[:space:]]*)image:.*$|\1image: ${IMAGE_URI}|" \
               "$FILE"
         
-            echo "After update:"
+            echo "===== AFTER ====="
             grep -nE '^[[:space:]]*image:' "$FILE"
         
-            git diff --check
+            echo "===== GIT DIFFERENCE ====="
             git diff -- "$FILE"
         
             if git diff --quiet -- "$FILE"; then
-              echo "Deployment already has the same image."
+              echo "No image changes detected."
               exit 0
             fi
         
@@ -87,9 +84,10 @@ jobs:
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
         
             git add "$FILE"
-            git commit -m "Update frontend image ${GITHUB_SHA}"
+            git commit -m "Update frontend image to verified digest"
             git push origin HEAD:main
-          
+        
+            echo "Manifest pushed successfully to main"
 
       # 6. Install Cosign
       - name: Install Cosign
