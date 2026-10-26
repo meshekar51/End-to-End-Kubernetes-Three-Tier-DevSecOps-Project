@@ -49,24 +49,46 @@ jobs:
           tags: |
             ${{ steps.login-ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:${{ github.sha }}
             
-      #Update deployment yaml
-      - name: deployment yaml new image tag
-        shell: bash
+      - name: Update deployment.yaml with verified image
+        env:
+            IMAGE_URI: ${{ steps.login-ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}@${{ steps.build.outputs.digest }}
         run: |
-          set -e
-
-          sed -i "s/^  image:.*/  image: ${{ github.run_number }}/" Kubernetes-Manifests-file/Backend/deployment.yaml
-
-          git config --local user.email "meshekar5@gmail.com"
-          git config --local user.name "meshekar51"
-
-          if git diff --quiet -- Kubernetes-Manifests-file/Frontend/deployment.yaml; then
-            echo "No Helm values change required."
-          else
-            git add Kubernetes-Manifests-file/Frontend/deployment.yaml
-            git commit -m "Update image tag to ${{ github.run_number }}"
-            git push origin HEAD:${{ github.ref_name }}
-          fi
+            set -euo pipefail
+        
+            FILE="Kubernetes-Manifests-file/Frontend/deployment.yaml"
+        
+            echo "Before update:"
+            grep -nE '^[[:space:]]*image:' "$FILE"
+        
+            COUNT=$(grep -cE '^[[:space:]]*image:' "$FILE" || true)
+        
+            if [ "$COUNT" -ne 1 ]; then
+              echo "Expected exactly one image field, found $COUNT"
+              exit 1
+            fi
+        
+            sed -i -E \
+              "s|^([[:space:]]*)image:.*$|\1image: ${IMAGE_URI}|" \
+              "$FILE"
+        
+            echo "After update:"
+            grep -nE '^[[:space:]]*image:' "$FILE"
+        
+            git diff --check
+            git diff -- "$FILE"
+        
+            if git diff --quiet -- "$FILE"; then
+              echo "Deployment already has the same image."
+              exit 0
+            fi
+        
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        
+            git add "$FILE"
+            git commit -m "Update frontend image ${GITHUB_SHA}"
+            git push origin HEAD:main
+          
 
       # 6. Install Cosign
       - name: Install Cosign
