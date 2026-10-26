@@ -55,7 +55,7 @@ jobs:
         run: |
             set -euo pipefail
         
-            FILE="Kubernetes-Manifests-file/Frontend/deployment.yaml"
+            FILE="Kubernetes-Manifests-file/Backend/deployment.yaml"
         
             echo "Before update:"
             grep -nE '^[[:space:]]*image:' "$FILE"
