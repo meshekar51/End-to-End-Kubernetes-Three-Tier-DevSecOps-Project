@@ -1,0 +1,94 @@
+
+name: Docker Build - SBOM - Trivy Security Gate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sbom-security:
+    name: Build and Scan SBOM
+    runs-on: ubuntu-latest
+
+    steps:
+      # Step 1: Checkout source
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # Step 2: Build image locally on runner
+      - name: Build Docker Image
+        run: |
+          docker build -t myapp:${{ github.sha }} .
+
+      # Step 3: Generate SBOM from image
+      - name: Generate SBOM using Syft
+        uses: anchore/sbom-action@v0
+        with:
+          image: myapp:${{ github.sha }}
+          format: cyclonedx-json
+          output-file: sbom.cdx.json
+          upload-artifact: false
+
+      # Step 4: Upload SBOM
+      - name: Upload SBOM Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-report
+          path: sbom.cdx.json
+          if-no-files-found: error
+          retention-days: 30
+
+      # Step 5: Scan SBOM with Aqua Trivy
+      - name: Scan SBOM - CRITICAL only
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: sbom
+          scan-ref: sbom.cdx.json
+          scanners: vuln
+          format: json
+          output: trivy-report.json
+          severity: CRITICAL
+          exit-code: '1'
+
+      # Step 6: Print vulnerabilities in logs
+      - name: Log Critical Vulnerabilities
+        if: always()
+        shell: bash
+        run: |
+          if [ ! -s trivy-report.json ]; then
+            echo "Trivy report missing or empty"
+            exit 1
+          fi
+
+          echo "===== CRITICAL VULNERABILITIES ====="
+
+          jq -r '
+            .Results[]? |
+            .Target as $target |
+            .Vulnerabilities[]? |
+            select(.Severity == "CRITICAL") |
+            "Target: \($target)
+            CVE: \(.VulnerabilityID)
+            Package: \(.PkgName)
+            Installed: \(.InstalledVersion)
+            Fixed: \(.FixedVersion // "Not available")
+            ----------------------"
+          ' trivy-report.json
+
+          echo "===== END REPORT ====="
+
+      # Step 7: Save Trivy scan report even on failure
+      - name: Upload Trivy Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-scan-report
+          path: trivy-report.json
+          if-no-files-found: warn
+          retention-days: 30
