@@ -3,7 +3,7 @@ FROM dhi.io/node:24-dev AS build
 
 WORKDIR /usr/src/app
 
-COPY package*.json ./
+COPY package.json .
 
 RUN npm ci
 
@@ -22,7 +22,7 @@ WORKDIR /app
 
 COPY --from=build /usr/src/app/build ./build
 COPY --from=build /usr/src/app/node_modules ./node_modules
-COPY --from=build /usr/src/app/package*.json ./
+COPY --from=build /usr/src/app/package.json .
 
 EXPOSE 3000
 
