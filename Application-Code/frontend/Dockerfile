@@ -6,6 +6,7 @@ WORKDIR /usr/src/app
 
 # Files are relative to the Docker build context
 COPY package.json ./
+RUN npm install --package-lock-only && npm ci
 
 RUN npm ci
 
