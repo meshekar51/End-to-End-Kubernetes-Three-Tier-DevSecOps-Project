@@ -22,7 +22,11 @@ jobs:
       # 1. Checkout
       - name: Checkout repository
         uses: actions/checkout@v4
-
+        
+      - name: Generate package-lock.json
+        working-directory: Application-Code/frontend
+        run: npm install --package-lock-only
+        
       # 2. Setup Buildx
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
