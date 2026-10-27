@@ -5,7 +5,7 @@ FROM dhi.io/node:24-dev AS build
 WORKDIR /usr/src/app
 
 # Files are relative to the Docker build context
-COPY package.json package-lock.json ./
+COPY package.json ./
 
 RUN npm ci
 
