@@ -1,19 +1,19 @@
-# Stage 1: Build
+
+# Stage 1: Build frontend
 FROM dhi.io/node:24-dev AS build
 
 WORKDIR /usr/src/app
 
-COPY Application-Code/frontend/package.json .
+# Files are relative to the Docker build context
+COPY package.json package-lock.json ./
 
 RUN npm ci
 
-COPY Application-Code/frontend/* .
+COPY . .
 
 RUN npm run build
 
-# Remove development dependencies
 RUN npm prune --omit=dev
-
 
 # Stage 2: Production
 FROM dhi.io/node:24
@@ -22,9 +22,9 @@ WORKDIR /app
 
 COPY --from=build /usr/src/app/build ./build
 COPY --from=build /usr/src/app/node_modules ./node_modules
-COPY --from=build /usr/src/app/package.json .
+COPY --from=build /usr/src/app/package.json ./
 
 EXPOSE 3000
 
-# Adjust this to your application's actual entry point
+# Adjust for your actual application entry point
 CMD ["node", "build/index.js"]
