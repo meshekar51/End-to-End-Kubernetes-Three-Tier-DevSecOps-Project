@@ -8,8 +8,6 @@ WORKDIR /usr/src/app
 COPY package.json ./
 RUN npm install --package-lock-only && npm ci
 
-RUN npm ci
-
 COPY . .
 
 RUN npm run build
