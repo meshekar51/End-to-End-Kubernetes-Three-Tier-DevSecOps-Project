@@ -7,7 +7,6 @@ on:
       - main
     paths:
       - 'Application-Code/frontend/**'
-
   workflow_dispatch:
 
 permissions:
@@ -16,6 +15,7 @@ permissions:
 
 jobs:
   build-sign-verify:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
 
     steps:
@@ -23,104 +23,218 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. AWS Authentication (only once)
+      # 2. Setup Buildx
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # 3. Build Docker image LOCALLY
+      - name: Build Docker image locally
+        uses: docker/build-push-action@v6
+        with:
+          context: ./Application-Code/frontend
+          push: false
+          load: true
+          tags: frontend:${{ github.sha }}
+
+      # 4. Generate SBOM using Syft
+      - name: Generate CycloneDX SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: frontend:${{ github.sha }}
+          format: cyclonedx-json
+          output-file: sbom.cdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      # 5. Upload SBOM to GitHub Artifacts
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-sbom
+          path: sbom.cdx.json
+          if-no-files-found: error
+          retention-days: 30
+
+      # 6. Scan SBOM using Aqua Trivy
+      - name: Scan SBOM with Trivy
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: sbom
+          scan-ref: sbom.cdx.json
+          scanners: vuln
+          format: json
+          output: trivy-report.json
+          severity: CRITICAL
+          exit-code: '0'
+
+      # 7. Upload report even if scan fails
+      - name: Upload Trivy report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-trivy-report
+          path: trivy-report.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      # 8. Log CVEs and enforce security gate
+      - name: Critical vulnerability security gate
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ ! -s trivy-report.json ]; then
+            echo "::error::Trivy report missing"
+            exit 1
+          fi
+
+          jq -e '.Results | type == "array"' \
+            trivy-report.json > /dev/null
+
+          echo "===== CRITICAL VULNERABILITIES ====="
+
+          jq -r '
+            .Results[]? |
+            .Target as $target |
+            .Vulnerabilities[]? |
+            select(.Severity == "CRITICAL") |
+            "Target: \($target)
+            CVE: \(.VulnerabilityID)
+            Package: \(.PkgName)
+            Installed: \(.InstalledVersion)
+            Fixed: \(.FixedVersion // "N/A")
+            ----------------------"
+          ' trivy-report.json
+
+          COUNT=$(jq '
+            [.Results[]? |
+             .Vulnerabilities[]? |
+             select(.Severity == "CRITICAL")]
+            | length
+          ' trivy-report.json)
+
+          echo "Critical vulnerabilities found: $COUNT"
+
+          if [ "$COUNT" -gt 0 ]; then
+            echo "::error::Security gate FAILED"
+            exit 1
+          fi
+
+          echo "Security gate PASSED"
+
+      # 9. AWS Authentication
+      # Only reached if security gate PASSES
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
 
-      # 3. ECR Login (only once)
+      # 10. Login to ECR
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      # 4. Docker Buildx
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      # 5. Build and Push
-      - name: Build and push Docker image
-        id: build
-        uses: docker/build-push-action@v6
-        with:
-          context: ./Application-Code/frontend
-          push: true
-          tags: |
-            ${{ steps.login-ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:${{ github.sha }}
-            
-              
-      - name: Update deployment.yaml with verified image
+      # 11. Tag and push scanned image
+      - name: Push verified image to ECR
+        id: push-image
+        shell: bash
         env:
-            IMAGE_URI: ${{ steps.login-ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}@${{ steps.build.outputs.digest }}
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          REPOSITORY: ${{ vars.ECR_REPOSITORY }}
         run: |
-            set -euo pipefail
-        
-            FILE="Kubernetes-Manifests-file/Frontend/deployment.yaml"
-        
-            echo "Before update:"
-            grep -nE '^[[:space:]]*image:' "$FILE"
-        
-            COUNT=$(grep -cE '^[[:space:]]*image:' "$FILE" || true)
-        
-            if [ "$COUNT" -ne 1 ]; then
-              echo "Expected exactly one image field, found $COUNT"
-              exit 1
-            fi
-        
-            sed -i -E \
-              "s|^([[:space:]]*)image:.*$|\1image: ${IMAGE_URI}|" \
-              "$FILE"
-        
-            echo "After update:"
-            grep -nE '^[[:space:]]*image:' "$FILE"
-        
-            git diff --check
-            git diff -- "$FILE"
-        
-            if git diff --quiet -- "$FILE"; then
-              echo "Deployment already has the same image."
-              exit 0
-            fi
-        
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-        
-            git add "$FILE"
-            git commit -m "Update frontend image ${GITHUB_SHA}"
-            git push origin HEAD:main
-          
+          set -euo pipefail
 
-      # 6. Install Cosign
+          LOCAL_IMAGE="frontend:${GITHUB_SHA}"
+          ECR_IMAGE="${REGISTRY}/${REPOSITORY}:${GITHUB_SHA}"
+
+          docker tag "$LOCAL_IMAGE" "$ECR_IMAGE"
+          docker push "$ECR_IMAGE"
+
+          DIGEST=$(aws ecr describe-images \
+            --repository-name "$REPOSITORY" \
+            --image-ids "imageTag=${GITHUB_SHA}" \
+            --query 'imageDetails[0].imageDigest' \
+            --output text)
+
+          if [[ ! "$DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+            echo "::error::Invalid ECR image digest"
+            exit 1
+          fi
+
+          IMAGE_URI="${REGISTRY}/${REPOSITORY}@${DIGEST}"
+
+          echo "image_uri=$IMAGE_URI" >> "$GITHUB_OUTPUT"
+          echo "Pushed image: $IMAGE_URI"
+
+      # 12. Install Cosign
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3
 
-      # 7. Sign image
-      - name: Sign Docker image
+      # 13. Sign ECR image
+      - name: Sign ECR image
         env:
           COSIGN_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
           COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
-          IMAGE_URI: ${{ steps.login-ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}@${{ steps.build.outputs.digest }}
+          IMAGE_URI: ${{ steps.push-image.outputs.image_uri }}
         run: |
           cosign sign \
             --key env://COSIGN_KEY \
             --yes \
             "$IMAGE_URI"
 
-      # 8. Verify signature
+      # 14. Verify signature
       - name: Verify Docker image signature
         env:
           COSIGN_PUBLIC_KEY: ${{ secrets.COSIGN_PUBLIC_KEY }}
-          IMAGE_URI: ${{ steps.login-ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}@${{ steps.build.outputs.digest }}
+          IMAGE_URI: ${{ steps.push-image.outputs.image_uri }}
         run: |
           cosign verify \
             --key env://COSIGN_PUBLIC_KEY \
             "$IMAGE_URI"
 
-      # 9. Success
-      - name: Show signed image
+      # 15. Update deployment manifest
+      # Only after successful Cosign verification
+      - name: Update deployment.yaml
         env:
-          IMAGE_URI: ${{ steps.login-ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}@${{ steps.build.outputs.digest }}
+          IMAGE_URI: ${{ steps.push-image.outputs.image_uri }}
         run: |
-          echo "Successfully built, signed and verified:"
-          echo "$IMAGE_URI"
+          set -euo pipefail
+
+          FILE="Kubernetes-Manifests-file/Frontend/deployment.yaml"
+
+          COUNT=$(grep -cE \
+            '^[[:space:]]*image:' "$FILE" || true)
+
+          if [ "$COUNT" -ne 1 ]; then
+            echo "Expected exactly one image field"
+            exit 1
+          fi
+
+          sed -i -E \
+            "s|^([[:space:]]*)image:.*$|\1image: ${IMAGE_URI}|" \
+            "$FILE"
+
+          git diff --check
+
+          if git diff --quiet -- "$FILE"; then
+            echo "Image already up to date"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add "$FILE"
+          git commit -m "Update frontend image ${GITHUB_SHA}"
+          git push origin HEAD:main
+
+      # 16. Final success
+      - name: Show verified image
+        env:
+          IMAGE_URI: ${{ steps.push-image.outputs.image_uri }}
+        run: |
+          echo "Security scan PASSED"
+          echo "Cosign signature VERIFIED"
+          echo "Image: $IMAGE_URI"
