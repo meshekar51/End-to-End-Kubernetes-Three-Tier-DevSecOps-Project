@@ -3,11 +3,11 @@ FROM dhi.io/node:24-dev AS build
 
 WORKDIR /usr/src/app
 
-COPY package.json .
+COPY Application-Code/frontend/package.json .
 
 RUN npm ci
 
-COPY . .
+COPY Application-Code/frontend/* .
 
 RUN npm run build
 
