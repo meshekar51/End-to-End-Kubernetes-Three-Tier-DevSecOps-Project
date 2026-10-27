@@ -1,6 +1,6 @@
 
 # Stage 1: Build frontend
-FROM dhi.io/alpine-base:3.24-alpine3.24-dev AS build
+FROM dhi.io/node:26-alpine AS build
 
 WORKDIR /usr/src/app
 
