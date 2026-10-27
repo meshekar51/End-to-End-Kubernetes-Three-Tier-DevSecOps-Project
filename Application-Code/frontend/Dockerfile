@@ -1,6 +1,6 @@
 
 # Stage 1: Build frontend
-FROM dhi.io/node:24-dev AS build
+FROM dhi.io/node:24-alpine3.23-sfw-dev AS build
 
 WORKDIR /usr/src/app
 
@@ -15,7 +15,7 @@ RUN npm run build
 RUN npm prune --omit=dev
 
 # Stage 2: Production
-FROM dhi.io/node:24
+FROM dhi.io/node:24-alpine3.23
 
 WORKDIR /app
 
